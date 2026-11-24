@@ -323,7 +323,7 @@ The raw results of our runs are already in `results/`. Each run script overwrite
 ### 7.1 Set up
 
 ```bash
-git clone <this repository> && cd <its folder>
+git clone https://github.com/mdma4d/traffic-signs-specialist-vs-generalist.git && cd traffic-signs-specialist-vs-generalist
 ```
 
 ```bash
