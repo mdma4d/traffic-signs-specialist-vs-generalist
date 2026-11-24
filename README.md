@@ -100,11 +100,17 @@ In the large network 4,685,376 parameters are convolution weights, 3,840 belong 
 
 All trained models share one recipe; only the peak learning rate, the input size and the number of epochs differ.
 
-- **Objective:** cross-entropy over $`K = 43`$ classes ($`K = 44`$ for the open-set models), without label smoothing or class weights:
+**Objective.** The network outputs logits $`z_1(x), \dots, z_K(x)`$ for $`K = 43`$ classes ($`K = 44`$ for the open-set models), turned into probabilities by the softmax:
 
-  ```math
-  L = -\frac{1}{B} \sum_{i=1}^{B} \log p_{y_i}(x_i), \qquad p_k(x) = \frac{e^{z_k(x)}}{\sum_{j=1}^{K} e^{z_j(x)}}, \qquad B = 128
-  ```
+```math
+p_k(x) = \frac{e^{z_k(x)}}{\sum_{j=1}^{K} e^{z_j(x)}}
+```
+
+Training minimises the cross-entropy over a mini-batch of $`B = 128`$ images with labels $`y_i`$, without label smoothing or class weights:
+
+```math
+L = -\frac{1}{B} \sum_{i=1}^{B} \log p_{y_i}(x_i)
+```
 
 - **Optimiser:** AdamW [13] with weight decay $`10^{-4}`$ and a one-cycle learning-rate schedule [14]. The peak rate is $`2 \cdot 10^{-3}`$ for the CNNs trained from scratch and between $`3 \cdot 10^{-5}`$ and $`10^{-3}`$ for pretrained models, set per model family.
 - **Epochs:** 6 for pretrained models; 15 and 30 for the small and large CNN.
@@ -148,19 +154,21 @@ Two further rules were evaluated on top of a trained model: accepting an answer 
 
 ### 2.6 Evaluation protocol
 
-- **Accuracy.** Top-1 accuracy on the full GTSRB test split for trained models and on the balanced 430-image subset for zero-shot models. For a set of $`n`$ images the standard error and 95% interval are
-
-  ```math
-  SE = \sqrt{\frac{p(1-p)}{n}}, \qquad p \pm 1.96 \, SE
-  ```
-
-  which gives ±0.12 points at $`p = 0.995`$, $`n = 12630`$; ±4.6 points at $`p = 0.6`$, $`n = 430`$; and ±1.1 points at $`p = 0.97`$, $`n = 940`$.
+- **Accuracy.** Top-1 accuracy on the full GTSRB test split for trained models and on the balanced 430-image subset for zero-shot models. Sampling error is given below.
 - **Run-to-run variance.** Sample standard deviation of accuracy over four seeds, for the three models trained with several seeds.
 - **Open-set metrics.** Each image is answered correctly, answered falsely, or rejected; the three shares sum to one. We report coverage (the share answered) and selective risk (false answers divided by answers) [12]. For a set containing no known signs, every answer is false.
 - **Zero-count bound.** When 0 errors are observed in $`n`$ trials, the 95% upper bound on the true rate is $`3/n`$ (rule of three).
 - **Latency.** Wall-clock time per image at batch size 1 on the GPU, after warm-up, including file decoding, resizing and normalisation. This is request latency, not batched throughput.
 - **Memory.** Peak GPU memory allocated by PyTorch during inference (weights and activations). Zero-shot encoders run in float16, the vision LLM in bfloat16, trained classifiers in float32.
 - **Hardware and software.** One RTX 4090 Laptop GPU (16 GB); Python 3.14, PyTorch 2.15, torchvision 0.29, transformers 5.24.
+
+**Sampling error.** For an accuracy $`p`$ measured on $`n`$ images the standard error and the 95% interval are
+
+```math
+SE = \sqrt{\frac{p(1-p)}{n}}, \qquad p \pm 1.96 \, SE
+```
+
+This gives ±0.12 points at $`p = 0.995`$, $`n = 12630`$; ±4.6 points at $`p = 0.6`$, $`n = 430`$; and ±1.1 points at $`p = 0.97`$, $`n = 940`$.
 
 ## 3. Results
 
