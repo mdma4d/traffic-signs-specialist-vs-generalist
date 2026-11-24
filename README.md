@@ -400,20 +400,20 @@ REPORT.md                  full write-up
 
 The datasets are not redistributed here; the scripts download them from their official sources. Check their terms before using them for anything beyond research. `models/big_cnn_oe_all.pt` was trained on GTSRB, BelgiumTSC and GTSDB crops.
 
-1. J. Stallkamp, M. Schlipsing, J. Salmen, C. Igel. Man vs. computer: Benchmarking machine learning algorithms for traffic sign recognition. *Neural Networks*, 32, 2012. (GTSRB)
+1. J. Stallkamp, M. Schlipsing, J. Salmen, C. Igel. Man vs. computer: Benchmarking machine learning algorithms for traffic sign recognition. *Neural Networks*, 32:323–332, 2012. (GTSRB)
 2. S. Houben, J. Stallkamp, J. Salmen, M. Schlipsing, C. Igel. Detection of traffic signs in real-world images: The German Traffic Sign Detection Benchmark. *IJCNN*, 2013. (GTSDB)
-3. R. Timofte, K. Zimmermann, L. Van Gool. Multi-view traffic sign detection, recognition, and 3D localisation. *Machine Vision and Applications*, 25, 2014. (BelgiumTSC)
-4. A. Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. (CIFAR-100)
-5. A. Radford et al. Learning transferable visual models from natural language supervision. *ICML*, 2021. (CLIP)
+3. R. Timofte, K. Zimmermann, L. Van Gool. Multi-view traffic sign detection, recognition, and 3D localisation. *Machine Vision and Applications*, 25(3):633–647, 2014. (BelgiumTSC)
+4. A. Krizhevsky. Learning multiple layers of features from tiny images. Technical report, 2009. (CIFAR-100)
+5. A. Radford et al. Learning transferable visual models from natural language supervision. *ICML*, PMLR 139, 2021. (CLIP)
 6. M. Tschannen et al. SigLIP 2: Multilingual vision-language encoders with improved semantic understanding, localization, and dense features. arXiv:2502.14786, 2025.
-7. M. Oquab et al. DINOv2: Learning robust visual features without supervision. *TMLR*, 2024.
+7. M. Oquab et al. DINOv2: Learning robust visual features without supervision. arXiv:2304.07193, 2023.
 8. O. Siméoni et al. DINOv3. arXiv:2508.10104, 2025.
 9. Qwen Team. Qwen3-VL-4B-Instruct, model card. Hugging Face, `Qwen/Qwen3-VL-4B-Instruct`.
 10. D. Hendrycks, M. Mazeika, T. Dietterich. Deep anomaly detection with outlier exposure. *ICLR*, 2019.
 11. D. Hendrycks, K. Gimpel. A baseline for detecting misclassified and out-of-distribution examples in neural networks. *ICLR*, 2017.
 12. Y. Geifman, R. El-Yaniv. Selective classification for deep neural networks. *NeurIPS*, 2017.
 13. I. Loshchilov, F. Hutter. Decoupled weight decay regularization. *ICLR*, 2019. (AdamW)
-14. L. N. Smith, N. Topin. Super-convergence: Very fast training of neural networks using large learning rates. 2019. (one-cycle schedule)
+14. L. N. Smith, N. Topin. Super-convergence: Very fast training of neural networks using large learning rates. arXiv:1708.07120, 2017. (one-cycle schedule)
 15. K. Simonyan, A. Zisserman. Very deep convolutional networks for large-scale image recognition. *ICLR*, 2015.
 
 ## License
