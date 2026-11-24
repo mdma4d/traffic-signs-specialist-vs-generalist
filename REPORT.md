@@ -150,12 +150,11 @@ Full error lists for each approach are in `results/report.md`.
 
 ## Limitations
 
-- **The classifier's data advantage.** It was trained on GTSRB and tested on GTSRB: the same country, the same camera. On Ukrainian signs and under other shooting conditions the result will be worse, and this was not measured.
+- **The classifier's data advantage.** It was trained on GTSRB and tested on GTSRB: the same country, the same camera. On signs of other countries and under other shooting conditions the result will be worse, and this was not measured.
 - **Zero-shot approaches depend on the wording.** One wording per class was used, with literal English names of German signs. Tuning the descriptions ("a red circle with the number 50" instead of "speed limit 50 km/h") may raise accuracy; this was not tested.
 - **One model of each type.** A larger vision LLM might have done better, but Qwen3-VL-8B does not fit into 16 GB of GPU memory without compression.
 - **Cropped signs only.** Working with a full road frame requires a detector and was not evaluated here.
-- **Speed was measured on a single GPU.** On a CPU or on a Mac the ratios will hold, but the absolute numbers will differ.
-- **Jev was not tested,** following the decision not to connect OpenRouter at this stage.
+- **Speed was measured on a single GPU.** On a CPU or other hardware both the absolute numbers and the ratios between models may differ; this was not measured.
 
 ## Part 2. Comparing fine-tuned classifiers
 
@@ -404,11 +403,11 @@ The threshold is the same: "keep 97%" (accepts 97% of held-out German signs). Th
 - **Large networks with a plain threshold already reject background reasonably well** (0.2–0.4%); the small one does not (4.4%).
 - **On unknown signs of unseen types the numbers fluctuate** from 0.9% to 5.7% with no clear pattern. This is 4–26 photos out of 457 with a single run; the differences between methods are unreliable here.
 
-The final variant is the custom large CNN trained on German and Belgian signs with an "unknown" class made of unknown signs and background. At the 97% threshold: 94.6% correct answers on the German test, 0.10% false, 5.3% rejected; 0.0% false on background, 0.2% on random objects, 0.6–2.2% on unknown signs.
+The best variant at this stage is the custom large CNN trained on German and Belgian signs with an "unknown" class made of unknown signs and background (`oe_bg`); the final one, which also adds the group B types, is described below. At the 97% threshold: 94.6% correct answers on the German test, 0.10% false, 5.3% rejected; 0.0% false on background, 0.2% on random objects, 0.6–2.2% on unknown signs.
 
 ### Ready-to-use model
 
-The weights are saved in `models/big_cnn_oe_all.pt` (18 MB). This is the variant trained on all unknown sign types; see the section "Training on all unknown types and two-model agreement". The previous variant is next to it, `models/big_cnn_oe_bg.pt`. Recognition of one or several photos is done with `predict.py`:
+The weights are saved in `models/big_cnn_oe_all.pt` (18 MB). This is the variant trained on all unknown sign types; see the section "Training on all unknown types and two-model agreement". The previous variant, `models/big_cnn_oe_bg.pt`, is not included in the repository; `bash run_part4_reject.sh` recreates it together with the other variants. Recognition of one or several photos is done with `predict.py`:
 
 ```bash
 python predict.py data/testset/images/14_00251.png
@@ -416,7 +415,7 @@ python predict.py data/testset/images/14_00251.png
 
 The answer is the English sign name or "unknown", plus the confidence. The `--keep` option selects the threshold: 0.99 rejects less often and errs more often, 0.9 the other way round; the default is 0.97. The input must be a photo of a single sign cropped from the frame; the script cannot find a sign in a full frame. torch and torchvision are required; a GPU is not.
 
-A check on the 4090 (with the previous variant): 11 German and 15 Belgian photos of the "Stop" sign were recognised correctly, and 2 unknown Belgian signs, 10 background crops and 5 random objects got the answer "unknown".
+A check of the shipped model in a fresh copy of the repository on the 4090: a German "Stop" sign was recognised correctly, and an unknown Belgian sign and a background crop got the answer "unknown". Retraining the model in that copy reproduced the numbers below exactly.
 
 ### Can zero false accepts be achieved
 
@@ -478,7 +477,7 @@ Number of false answers (set size in brackets):
 - **Two-model agreement helps precisely on the unseen.** On unknown signs of unseen types: 2 false instead of 10; on random objects: 0 instead of 6. Two networks err differently on unfamiliar input.
 - **On poorly shot known signs agreement does not help:** the number of false answers on the German test is the same or higher (18 versus 18, 13 versus 4). On a blurred photo both models make the same mistake.
 - **One model, 95% threshold:** zero false on all sets except the German test, where 4 out of 12,630 (0.03%) remain, with 90.3% correct answers and 9.7% rejected. This is the best that was achieved with a single model.
-- **Caveats.** One run per variant: 12 and 18 false for the same network in two trainings is variance, not an effect. The zero on unknown signs was obtained on types the model has seen; on a type that is in none of the sets, it may err just as confidently as it did earlier on "3.5 t".
+- **Caveats.** One run per variant: adding the group B types changed the German false answers at the 97% threshold from 12 to 18, although these types have nothing to do with German signs; with one run this cannot be told apart from seed variance. The zero on unknown signs was obtained on types the model has seen; on a type that is in none of the sets, it may err just as confidently as it did earlier on "3.5 t".
 
 ### Limitations of Part 4
 

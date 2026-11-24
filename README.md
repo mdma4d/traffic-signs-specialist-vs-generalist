@@ -265,7 +265,7 @@ Every model loses accuracy: the best lose 1–4 points, lightweight mobile netwo
 
 Rejecting 10% of the images lowers the selective risk by a factor of about 20. The thresholds are extreme because softmax classifiers are overconfident: at $`q = 0.95`$ an answer is accepted only if about 0.001% of the probability is left to all other outputs.
 
-**Negative results.** Test-time augmentation with nine views does not remove the remaining errors: the network repeats the same mistake on every view. Requiring two independently trained networks to agree reduces false answers on unseen foreign types (2 instead of 10) but not on blurred known signs, where both networks make the same mistake.
+**Negative results.** Test-time augmentation with nine views does not remove the remaining errors: on the `oe_bg` model at $`q = 0.97`$ the GTSRB false answers stay at 12, because the network repeats the same mistake on every view. Requiring the large CNN and ResNet-18 to agree, with the threshold recalibrated for the pair, reduces false answers on unseen foreign types (2 instead of 10 for `oe_bg` at $`q = 0.97`$) but not on known signs: on GTSRB the pair gives 19 instead of 12 (`oe_bg`, $`q = 0.97`$) and 13 instead of 4 (`oe_all`, $`q = 0.95`$). On a blurred known sign both networks make the same mistake.
 
 ## 4. Discussion
 
@@ -280,7 +280,7 @@ For the open-set problem the practical conclusion is that false acceptances are 
 - **Range of large models.** The largest model tested has 4.4B parameters and runs locally. Frontier multimodal models available through an API were not evaluated. They may be more accurate zero-shot; their latency and cost per image are further from 1 ms, not closer.
 - **Prompting.** One prompt wording per class was used for the zero-shot models. Prompt engineering may raise their accuracy; it is unlikely to close a 38-point gap but this was not measured.
 - **Data regime.** The task has 26,640 labelled training images. With few examples per class the balance between pretrained and from-scratch models may differ.
-- **Single runs.** Most models and all open-set variants were trained once. Between two trainings of the same open-set network the number of false answers on GTSRB moved from 12 to 18, so the reported 4 could as well be 8.
+- **Single runs.** Most models and all open-set variants were trained once. Adding the group B types to training changed the GTSRB false answers at $`q = 0.97`$ from 12 to 18, although these types have nothing to do with German signs. With one run per variant such a change cannot be separated from seed variance, so the reported 4 could as well be 8.
 - **Seen outlier types.** Zero false answers on foreign signs was measured on types present in training (in other photos). On a type absent from every set the model may be as confidently wrong as it was on the "3.5 t" sign.
 - **Outlier realism.** Background crops are random. In a full system the classifier receives what a detector mistook for a sign (round objects, adverts, lamps), which is harder.
 - **One shifted domain.** Only Belgian signs were tested, and they are close to the German ones.
@@ -320,7 +320,7 @@ The code is organised in four parts that correspond to RQ1–RQ4. Parts 1–4 ne
 
 The raw results of our runs are already in `results/`. Each run script overwrites them and regenerates its table; set `SKIP_DONE=1` to keep results that exist. A fresh copy of this repository reproduced the shipped numbers exactly on the same machine. On other GPUs or library versions expect small differences: training is seeded but not bit-exact across setups, and accuracy moves by about 0.5 points between runs on the German test and up to 2.5 on the Belgian one.
 
-### 1. Set up
+### 7.1 Set up
 
 ```bash
 git clone <this repository> && cd <its folder>
@@ -332,7 +332,7 @@ bash setup.sh
 
 `setup.sh` creates `.venv` and installs `requirements.txt`.
 
-### 2. Prepare the data
+### 7.2 Prepare the data
 
 All datasets are downloaded by the scripts; nothing has to be fetched by hand.
 
@@ -345,7 +345,7 @@ All datasets are downloaded by the scripts; nothing has to be fetched by hand.
 
 The GTSRB training split (about 190 MB) is downloaded by torchvision on the first training run.
 
-### 3. Run
+### 7.3 Run
 
 | Part | Command | What it does | Rough time on an RTX 4090 Laptop |
 |---|---|---|---|
@@ -366,7 +366,7 @@ bash run_part4_reject.sh final
 
 The first command trains the custom CNNs and ResNet-18 in about 5 minutes. The second retrains the shipped model in about 6 minutes, prints its numbers for every threshold and overwrites `models/big_cnn_oe_all.pt`.
 
-### 4. Read the tables
+### 7.4 Read the tables
 
 | Part | Table | Raw results |
 |---|---|---|
@@ -377,7 +377,7 @@ The first command trains the custom CNNs and ResNet-18 in about 5 minutes. The s
 
 The tables are rebuilt from the JSON files by `bench/report*.py`, which need only the Python standard library. The JSON files hold the answer for every image, so any number can be recomputed without a GPU.
 
-### Repository layout
+### 7.5 Repository layout
 
 ```text
 predict.py                 recognise a sign in an image, or answer "unknown"
