@@ -1,0 +1,10 @@
+# Tested with Python 3.14, torch 2.15 (CUDA 13.2), torchvision 0.29, transformers 5.24.
+# predict.py alone needs only torch, torchvision and pillow.
+torch
+torchvision
+pillow
+timm
+transformers
+accelerate
+sentencepiece
+protobuf

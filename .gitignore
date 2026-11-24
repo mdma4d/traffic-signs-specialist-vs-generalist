@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.log
+.DS_Store
+
+# datasets are downloaded and built by scripts/
+data/raw*/
+data/gtsrb_train/
+data/testset/images/
+data/belgium/
+data/belgium_train/
+data/belgium_unknown/
+data/background/
+
+# only the final model is versioned
+models/*
+!models/big_cnn_oe_all.pt
+
+# local-only material
+ru/

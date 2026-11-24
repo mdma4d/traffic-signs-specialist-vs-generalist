@@ -1,0 +1,44 @@
+class_id,name_en,name
+0,speed limit 20 km/h,Speed limit 20
+1,speed limit 30 km/h,Speed limit 30
+2,speed limit 50 km/h,Speed limit 50
+3,speed limit 60 km/h,Speed limit 60
+4,speed limit 70 km/h,Speed limit 70
+5,speed limit 80 km/h,Speed limit 80
+6,end of speed limit 80 km/h,End of speed limit 80
+7,speed limit 100 km/h,Speed limit 100
+8,speed limit 120 km/h,Speed limit 120
+9,no overtaking,No overtaking
+10,no overtaking for trucks,No overtaking for trucks
+11,right of way at the next intersection,Right of way at the next intersection
+12,priority road,Priority road
+13,yield,Yield
+14,stop,Stop
+15,no vehicles,No vehicles
+16,no trucks,No trucks
+17,no entry,No entry
+18,general danger,General danger
+19,dangerous curve to the left,Dangerous curve left
+20,dangerous curve to the right,Dangerous curve right
+21,double curve,Double curve
+22,bumpy road,Bumpy road
+23,slippery road,Slippery road
+24,road narrows on the right,Road narrows on the right
+25,road work,Road work
+26,traffic signals ahead,Traffic signals
+27,pedestrians,Pedestrians
+28,children crossing,Children crossing
+29,bicycles crossing,Bicycles crossing
+30,beware of ice or snow,Ice or snow
+31,wild animals crossing,Wild animals
+32,end of all speed and overtaking limits,End of all limits
+33,turn right ahead,Turn right ahead
+34,turn left ahead,Turn left ahead
+35,ahead only,Ahead only
+36,go straight or right,Go straight or right
+37,go straight or left,Go straight or left
+38,keep right,Keep right
+39,keep left,Keep left
+40,roundabout mandatory,Roundabout
+41,end of no overtaking,End of no overtaking
+42,end of no overtaking for trucks,End of no overtaking for trucks
