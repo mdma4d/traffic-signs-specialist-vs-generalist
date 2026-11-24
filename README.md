@@ -1,40 +1,293 @@
-# Can a large general-purpose model replace a small specialised one? Traffic signs, measured
+# Specialised versus General-Purpose Vision Models for Narrow-Domain Classification: An Empirical Study on Traffic Sign Recognition
 
-**Short answer: no.** On a narrow task with labelled data, a 4.7M-parameter CNN trained from scratch in three and a half minutes beats every large model we tried as is, and matches the best of them after fine-tuning at a fraction of the cost.
+## Abstract
 
-We asked the question in the three ways a large model can be used:
+Large general-purpose vision and vision-language models are increasingly proposed as drop-in replacements for task-specific classifiers. We test this claim on a narrow, well-defined task: closed-set recognition of 43 German traffic sign classes (GTSRB), followed by open-set recognition with a reject option. We compare three ways of using a large pretrained model (zero-shot inference, a linear probe on frozen features, and full fine-tuning) against compact convolutional networks trained from scratch, under one training recipe and one measurement protocol, on accuracy, latency and GPU memory. Zero-shot models with 0.4–4.4 billion parameters reach 39.1–60.7% accuracy; linear probes on frozen self-supervised features reach 65.6–65.7%; a 4.7M-parameter CNN trained from scratch in 3.4 minutes reaches 99.47 ± 0.04% (mean ± standard deviation over four seeds). The best fine-tuned large model (CLIP ViT-B/16, 85.8M parameters) is statistically indistinguishable from it (63 versus 62 errors on 12,630 images) at 18 times the parameters, 5 times the latency and 16 times the memory. For open-set recognition, the composition of the "unknown" training data, not the confidence threshold, determines the false-acceptance rate: the final model gives 4 false answers on 12,630 in-distribution images and none on 983 foreign signs, 2,000 background crops and 2,000 unrelated objects, at 90.3% coverage. Within the tested range, large general-purpose models do not replace a small specialised one. Code, per-image predictions and the trained model are included.
 
-| How the model is used | Model | Parameters | Accuracy | Time per image | GPU memory |
+![Accuracy, latency and GPU memory of seven approaches](docs/accuracy.svg)
+
+## Contents
+
+1. [Introduction](#1-introduction)
+2. [Methods](#2-methods)
+3. [Results](#3-results)
+4. [Discussion](#4-discussion)
+5. [Threats to validity](#5-threats-to-validity)
+6. [Using the trained model](#6-using-the-trained-model)
+7. [Reproducing the results](#7-reproducing-the-results)
+8. [References](#8-references)
+
+A longer narrative report with every intermediate table is in [REPORT.md](REPORT.md).
+
+## 1. Introduction
+
+Contrastive vision-language models [5, 6], self-supervised vision backbones [7, 8] and vision LLMs [9] are trained on hundreds of millions to billions of images and transfer to many tasks without task-specific training. This raises a practical question for any narrow recognition problem: is a specialised model still worth training, or can a large general-purpose model take its place?
+
+We study the question on traffic sign classification, a task with a fixed label set, abundant labelled data and strict latency requirements. A sign classifier in a vehicle must also decline to answer on inputs outside its label set, so we treat rejection as part of the task and not as an afterthought.
+
+**Research questions.**
+
+- **RQ1.** How accurate are large general-purpose models on this task without any task-specific training?
+- **RQ2.** When the same labelled data are available to all models, does model size or large-scale pretraining improve accuracy over a compact network trained from scratch, and at what cost in latency and memory?
+- **RQ3.** How do the trained models behave under distribution shift (signs of another country, another camera)?
+- **RQ4.** What determines the false-acceptance rate of a classifier with a reject option: the confidence threshold or the training data?
+
+**Contributions.**
+
+- A controlled comparison of 22 trained classifiers (0.3M to 92.9M parameters) and three zero-shot models (428M to 4.4B parameters) under one protocol, reporting accuracy, single-image latency, peak GPU memory and training cost.
+- Seed-to-seed variance estimates, which show that most published-style rankings inside the 99.0–99.5% band are not resolvable from single runs.
+- An ablation of the "unknown" training data for open-set recognition, including two negative results (test-time augmentation and two-model agreement).
+- A trained 18 MB model and scripts that rebuild every dataset and every number from public sources.
+
+## 2. Methods
+
+### 2.1 Task
+
+**Closed-set task.** The input $`x`$ is an RGB crop containing one traffic sign with a small margin. The output is a class $`y \in \{1, \dots, 43\}`$ of the German Traffic Sign Recognition Benchmark [1]. Detection of signs in a full frame is out of scope.
+
+**Open-set task.** The output space is extended to $`\{1, \dots, 43\} \cup \{\text{unknown}\}`$. The model must answer "unknown" for signs outside the 43 classes, for images without a sign, and may do so for in-distribution images it cannot classify reliably.
+
+### 2.2 Data
+
+| Set | Source | Role | Images |
+|---|---|---|---|
+| GTSRB train | [1] | training | 26,640 |
+| GTSRB test | [1] | in-distribution test | 12,630 |
+| GTSRB test, balanced subset | [1] | test for zero-shot models, 10 per class, fixed seed | 430 |
+| GTSRB held-out tracks | [1] | threshold selection only (every tenth physical sign) | 2,070 |
+| BelgiumTSC, known classes | [3] | shifted-distribution test: the 19 Belgian classes that map to GTSRB classes | 940 |
+| BelgiumTSC, known classes, train | [3] | training of the open-set models | 1,773 |
+| BelgiumTSC, foreign types | [3] | "unknown" signs: 36 types absent from GTSRB, split into groups A and B | 2,390 train / 983 test |
+| GTSDB crops | [2] | road-scene crops without signs; training and test crops come from different frames | 4,000 train / 2,000 test |
+| CIFAR-100 | [4] | unrelated objects, evaluation only | 2,000 |
+
+GTSRB training images come in tracks of 30 frames of one physical sign. Held-out data are therefore split by track: a random image split would leave near-duplicates of training frames in the held-out part and bias the threshold.
+
+### 2.3 Models
+
+**Zero-shot (no training on signs).** CLIP ViT-L/14 [5] and SigLIP 2 So400m/14 at 384 px [6] embed the image and one text prompt per class, `a photo of a '<sign name>' traffic sign`, and predict the class with the highest cosine similarity:
+
+```math
+\hat{y}(x) = \arg\max_{k \in \{1..43\}} \frac{E_{img}(x) \cdot E_{txt}(t_k)}{\lVert E_{img}(x) \rVert \, \lVert E_{txt}(t_k) \rVert}
+```
+
+The vision LLM, Qwen3-VL-4B-Instruct [9], receives the image (upscaled to at least 224 px on the short side) and the list of 43 class names, and is asked to output one name; the answer is matched to the list.
+
+**Linear probe.** DINOv2 ViT-S/14 [7] and DINOv3 ViT-S/16 [8] with the backbone frozen and only a linear classification layer trained.
+
+**Full fine-tuning.** Eighteen ImageNet- or web-pretrained configurations from the `timm` library, from MobileNetV3-Small (1.6M parameters) to ViT-B/16 initialised from CLIP and SigLIP 2 weights (85.8M and 92.9M); see `MODELS` in [bench/finetune.py](bench/finetune.py) for the list.
+
+**Compact CNNs trained from scratch.** A plain VGG-style network [15] without residual connections, attention or pretrained weights. One block is
+
+```text
+Conv 3x3 -> BatchNorm -> ReLU -> Conv 3x3 -> BatchNorm -> ReLU -> MaxPool 2x2
+```
+
+and the network is a stack of blocks followed by global average pooling, dropout (0.3) and one linear layer.
+
+| | Small CNN | Large CNN |
+|---|---|---|
+| Input | 48×48 RGB | 64×64 RGB |
+| Blocks and channels | 3: 32, 64, 128 | 4: 64, 128, 256, 512 |
+| Feature map before global pooling | 6×6×128 | 4×4×512 |
+| Parameters | 293,451 | 4,711,275 |
+| Weights, float32 | 1.1 MB | 18 MB |
+| Epochs | 15 | 30 |
+
+In the large network 4,685,376 parameters are convolution weights, 3,840 belong to batch normalisation and 22,059 to the linear layer; the "unknown" output adds 513. The receptive field of the last convolution is 68 px, so every output feature covers the whole 64 px input.
+
+### 2.4 Training
+
+All trained models share one recipe; only the peak learning rate, the input size and the number of epochs differ.
+
+- **Objective:** cross-entropy over $`K = 43`$ classes ($`K = 44`$ for the open-set models), without label smoothing or class weights:
+
+  ```math
+  L = -\frac{1}{B} \sum_{i=1}^{B} \log p_{y_i}(x_i), \qquad p_k(x) = \frac{e^{z_k(x)}}{\sum_{j=1}^{K} e^{z_j(x)}}, \qquad B = 128
+  ```
+
+- **Optimiser:** AdamW [13] with weight decay $`10^{-4}`$ and a one-cycle learning-rate schedule [14]. The peak rate is $`2 \cdot 10^{-3}`$ for the CNNs trained from scratch and between $`3 \cdot 10^{-5}`$ and $`10^{-3}`$ for pretrained models, set per model family.
+- **Epochs:** 6 for pretrained models; 15 and 30 for the small and large CNN.
+- **Precision:** bfloat16 autocast in training, float32 at inference.
+- **Augmentation:** rotation up to ±10°, translation up to 10%, scale 0.9–1.1, brightness and contrast ±40%, saturation ±30%. Horizontal flips are excluded because they change the meaning of directional signs.
+- **Input size:** 96 px for pretrained convolutional networks, 224 px for transformers and hybrids (their pretraining resolution), 48 and 64 px for the custom CNNs. Crops are resized to a square without preserving the aspect ratio.
+- **Seeds:** seed 0 for every model; seeds 1–3 additionally for ResNet-18 and both custom CNNs.
+
+### 2.5 Open-set recognition
+
+The open-set models add a 44th "unknown" output trained on auxiliary outliers, following the outlier-exposure approach [10]. The confidence score is the maximum softmax probability [11] among the 43 sign classes, with the softmax taken over all 44 outputs, so that probability assigned to "unknown" lowers it:
+
+```math
+s(x) = \max_{k \le 43} p_k(x), \qquad
+\text{answer}(x) = \begin{cases} \arg\max_{k \le 43} p_k(x) & \text{if } s(x) \ge \tau \\ \text{unknown} & \text{otherwise} \end{cases}
+```
+
+The threshold $`\tau_q`$ is the empirical $`(1-q)`$ quantile of $`s`$ on the 2,070 held-out German images, so that a fraction $`q \in \{0.99, 0.97, 0.95, 0.90\}`$ of them is accepted. No test data are used to set it.
+
+Five training variants of the same network isolate the effect of the outlier data:
+
+| Variant | Additional training data |
+|---|---|
+| `base` | none; 43 outputs, threshold on confidence only |
+| `oe` | + foreign sign types of group A, labelled "unknown" |
+| `oe_mix` | + Belgian images of the known classes, labelled with their class |
+| `oe_bg` | + road-scene crops without signs, labelled "unknown" |
+| `oe_all` | + foreign sign types of group B, labelled "unknown" |
+
+The final model (`oe_all`, large CNN) is trained on 43,734 images, 28% of them labelled "unknown":
+
+| Source | Label | Images | Repeats per epoch | In training |
+|---|---|---|---|---|
+| GTSRB train without held-out tracks | 43 signs | 24,570 | 1 | 24,570 |
+| BelgiumTSC, known classes | 43 signs | 1,773 | 4 | 7,092 |
+| BelgiumTSC, foreign types, group A | unknown | 868 | 4 | 3,472 |
+| BelgiumTSC, foreign types, group B | unknown | 1,150 | 4 | 4,600 |
+| GTSDB crops without signs | unknown | 4,000 | 1 | 4,000 |
+
+Two further rules were evaluated on top of a trained model: accepting an answer only if nine augmented views of the image agree (test-time augmentation), and only if two independently trained networks agree.
+
+### 2.6 Evaluation protocol
+
+- **Accuracy.** Top-1 accuracy on the full GTSRB test split for trained models and on the balanced 430-image subset for zero-shot models. For a set of $`n`$ images the standard error and 95% interval are
+
+  ```math
+  SE = \sqrt{\frac{p(1-p)}{n}}, \qquad p \pm 1.96 \, SE
+  ```
+
+  which gives ±0.12 points at $`p = 0.995`$, $`n = 12630`$; ±4.6 points at $`p = 0.6`$, $`n = 430`$; and ±1.1 points at $`p = 0.97`$, $`n = 940`$.
+- **Run-to-run variance.** Sample standard deviation of accuracy over four seeds, for the three models trained with several seeds.
+- **Open-set metrics.** Each image is answered correctly, answered falsely, or rejected; the three shares sum to one. We report coverage (the share answered) and selective risk (false answers divided by answers) [12]. For a set containing no known signs, every answer is false.
+- **Zero-count bound.** When 0 errors are observed in $`n`$ trials, the 95% upper bound on the true rate is $`3/n`$ (rule of three).
+- **Latency.** Wall-clock time per image at batch size 1 on the GPU, after warm-up, including file decoding, resizing and normalisation. This is request latency, not batched throughput.
+- **Memory.** Peak GPU memory allocated by PyTorch during inference (weights and activations). Zero-shot encoders run in float16, the vision LLM in bfloat16, trained classifiers in float32.
+- **Hardware and software.** One RTX 4090 Laptop GPU (16 GB); Python 3.14, PyTorch 2.15, torchvision 0.29, transformers 5.24.
+
+## 3. Results
+
+### 3.1 RQ1: zero-shot models
+
+| Model | Parameters | Trained on signs | Accuracy, 430 images | Latency | GPU memory |
 |---|---|---|---|---|---|
-| **Specialised, trained from scratch** | Custom CNN | **4.7M** | **99.5%** | **1.1 ms** | **83 MB** |
-| Large, as is (zero-shot) | SigLIP 2 So400m | 1,136M | 60.7% | 20.7 ms | 2.2 GB |
-| Large, as is (zero-shot) | Vision LLM, Qwen3-VL-4B | 4,438M | 52.6% | 199 ms | 8.6 GB |
-| Large, as is (zero-shot) | CLIP L/14 | 428M | 39.1% | 11.3 ms | 0.8 GB |
-| Pretrained features frozen, linear head trained | DINOv3-S | 21.6M | 65.7% | 10.0 ms | 93 MB |
-| Large, fully fine-tuned on the same data | CLIP B/16 | 85.8M | 99.5% | 5.6 ms | 1.3 GB |
+| Large CNN (ours) | 4.7M | yes | 98.8% | 1.1 ms | 83 MB |
+| ResNet-18 | 11.2M | yes | 97.2–99.5% | 1.7 ms | 0.2 GB |
+| SigLIP 2 So400m | 1,136M | no | 60.7% | 20.7 ms | 2.2 GB |
+| Qwen3-VL-4B | 4,438M | no | 52.6% | 199 ms | 8.6 GB |
+| CLIP ViT-L/14 | 428M | no | 39.1% | 11.3 ms | 0.8 GB |
 
-Zero-shot rows are measured on a 430-image balanced subset, where the custom CNN scores 98.8%; the other rows on the full GTSRB test split of 12,630 images.
+The best zero-shot model is 38 points below the large CNN on the same images, with 240 times more parameters. The vision LLM has 940 times more parameters, is 180 times slower and misclassifies every second image. The gap is an order of magnitude larger than the ±4.6-point sampling interval; the order of the zero-shot models among themselves is less certain.
 
-- **As is, large models are not close.** The best one is 38 points behind while having 240 times more parameters. The vision LLM has 940 times more parameters, is 180 times slower and gets every second image wrong.
-- **General-purpose features are not enough either.** With the backbone frozen and only a linear layer trained, DINOv2 and DINOv3 stop at 66%.
-- **Fine-tuned, a large model only ties.** CLIP B/16 makes 63 errors on 12,630 images, the custom CNN 62. For that tie it needs 18 times more parameters, 5 times more time per image and 16 times more GPU memory. And once fine-tuned it is itself a specialised model that needs the same labelled data.
+Errors are systematic: the zero-shot models confuse mirrored signs (left and right), fail on crossed-out ("end of restriction") signs, and degrade with resolution. On signs up to 35 px wide all three score 27–38%.
 
-The second half of the study teaches the small network to answer "unknown" instead of guessing, which a plain classifier cannot do.
+### 3.2 RQ2: trained classifiers
 
-This repository contains the code, the raw results and a trained model, so every number below can be reproduced.
+| Model | Parameters | Input | Accuracy | Errors of 12,630 | Latency | GPU memory | Training |
+|---|---|---|---|---|---|---|---|
+| Large CNN, from scratch | 4.7M | 64 px | 99.51% | 62 | 1.1 ms | 83 MB | 3.4 min |
+| CLIP ViT-B/16, fine-tuned | 85.8M | 224 px | 99.50% | 63 | 5.6 ms | 1,319 MB | 9.1 min |
+| FastViT-T8 | 3.3M | 224 px | 99.31% | 87 | 6.2 ms | 61 MB | 4.4 min |
+| ViT-B/16 | 85.8M | 224 px | 99.30% | 88 | 6.3 ms | 1,319 MB | 9.1 min |
+| SigLIP 2 ViT-B/16, fine-tuned | 92.9M | 224 px | 99.29% | 90 | 6.1 ms | 1,429 MB | 9.7 min |
+| DINOv2 ViT-S/14, fine-tuned | 21.7M | 224 px | 99.25% | 95 | 5.8 ms | 337 MB | 5.0 min |
+| ResNet-18, mean of 4 seeds | 11.2M | 96 px | 99.02% | 124 | 1.7 ms | 185 MB | 0.5 min |
+| Small CNN, from scratch | 0.3M | 48 px | 98.99% | 127 | 0.8 ms | 6 MB | 0.5 min |
+| DINOv3 ViT-S/16, linear probe | 21.6M | 224 px | 65.69% | 4,333 | 10.0 ms | 93 MB | 1.9 min |
+| DINOv2 ViT-S/14, linear probe | 21.7M | 224 px | 65.60% | 4,345 | 4.1 ms | 88 MB | 1.9 min |
 
-![Accuracy, speed and GPU memory of seven approaches](docs/accuracy.svg)
+All 22 models are listed in [results/classifiers.md](results/classifiers.md).
 
-- [Try the trained model](#try-the-trained-model)
-- [What we did and what we found](#what-we-did-and-what-we-found)
-- [Technical details](#technical-details)
-- [Reproduce the results](#reproduce-the-results)
-- [Repository layout](#repository-layout)
-- [Datasets](#datasets)
+**Variance.**
 
-The full write-up with methodology, every table and all caveats is in [REPORT.md](REPORT.md).
+| Model | Seeds | Accuracy, mean ± s.d. | Range |
+|---|---|---|---|
+| Large CNN | 4 | 99.47 ± 0.04% | 99.42–99.51% |
+| Small CNN | 4 | 98.99 ± 0.08% | 98.92–99.10% |
+| ResNet-18 | 4 | 99.02 ± 0.24% | 98.76–99.34% |
 
-## Try the trained model
+**Findings.**
+
+- **Accuracy saturates at 99.0–99.5%,** and eight models fall in this band. With a sampling interval of ±0.12 points and a seed standard deviation of up to 0.24 points, single-run differences below about half a point are not significant.
+- **Size and pretraining do not improve accuracy.** The large CNN (4.7M, random initialisation) and CLIP ViT-B/16 (85.8M, pretrained on 400M image-text pairs) differ by one error in 12,630.
+- **The cost differs by an order of magnitude.** Relative to the large CNN, fine-tuned CLIP ViT-B/16 has 18.2 times the parameters, 5.1 times the latency, 15.9 times the inference memory and 13.2 times the training memory (9.8 GB against 0.7 GB).
+- **Frozen general-purpose features are insufficient.** Linear probes reach 66%, while the same DINOv2 backbone fine-tuned end to end reaches 99.25%. The accuracy comes from training on the task, not from the pretrained representation.
+
+### 3.3 RQ3: distribution shift
+
+Models trained on German signs only were evaluated on 940 Belgian images of the 19 shared classes, without further training.
+
+| Model | Runs | GTSRB test | BelgiumTSC | Drop |
+|---|---|---|---|---|
+| CLIP ViT-B/16, fine-tuned | 1 | 99.50% | 98.2% | 1.3 |
+| Large CNN | 4 | 99.47% | 96.9 ± 1.1% | 2.6 |
+| Small CNN | 4 | 98.99% | 94.9 ± 0.8% | 4.1 |
+| ResNet-18 | 4 | 99.02% | 94.8 ± 1.1% | 4.3 |
+| SigLIP 2 So400m, zero-shot | 1 | n/a | 75.4% | n/a |
+
+Every model loses accuracy: the best lose 1–4 points, lightweight mobile networks up to 11. The loss is concentrated in classes whose pictograms differ between the countries: "Children crossing" is recognised in 72% of cases and "Bicycles crossing" in 7%, while classes with identical artwork transfer at 98–100%. The large CNN ranges from 95.3% to 97.8% across seeds, and CLIP was trained once, so the 1.3-point difference between them is comparable to one standard deviation of the seed spread and is not significant. This is the only experiment in which large-scale pretraining may give an advantage; the data do not establish it.
+
+### 3.4 RQ4: open-set recognition
+
+**Ablation of the "unknown" training data** (large CNN, $`q = 0.95`$; counts of false answers unless noted):
+
+| Variant | GTSRB correct | GTSRB false | Belgian known, correct | Foreign A (≈526) | Foreign B (457) | Background (2,000) | Objects (2,000) |
+|---|---|---|---|---|---|---|---|
+| `base` | 89.8% | 2 | 62.1% | 35 | 2 | 2 | 5 |
+| `oe` | 89.6% | 1 | 47.3% | 2 | 1 | 1 | 0 |
+| `oe_mix` | 91.0% | 2 | 95.4% | 3 | 3 | 4 | 13 |
+| `oe_bg` | 92.3% | 6 | 97.8% | 0 | 10 | 0 | 2 |
+| `oe_all` | 90.3% | 4 | 96.1% | 0 | 0 * | 0 | 0 |
+
+\* In `oe_all` the types of group B are part of training; the test images are different photos of types the model has seen.
+
+- **A threshold alone is not sufficient.** The `base` model still accepts 35 foreign signs at a threshold of 0.99996, and answers only 62% of the Belgian images of known classes.
+- **Outliers from one domain create a shortcut.** With Belgian foreign signs as the only outliers (`oe`), the network learns "Belgian photo means unknown": coverage of known Belgian signs falls to 47%. Adding Belgian images of known classes (`oe_mix`) restores it to 95%.
+- **Each outlier source removes the errors of its own kind.** Background crops remove false answers on background; the group B types remove the 10 confident errors on group B. Before that, a "3.5 t weight limit" sign was read as "Speed limit 30".
+- **In-distribution errors do not improve.** False answers on GTSRB stay between 1 and 6 across variants; outlier exposure addresses unfamiliar input, not ambiguous known signs.
+
+**Final model** (`oe_all`, $`q = 0.95`$, $`\tau = 0.99999`$):
+
+| Test set | n | Correct | False answers | Rejected | 95% upper bound on false rate |
+|---|---|---|---|---|---|
+| GTSRB test | 12,630 | 90.3% | 4 (0.03%) | 9.7% | n/a |
+| Belgian signs, known classes | 940 | 96.1% | 0 | 3.9% | 0.32% |
+| Foreign signs | 983 | n/a | 0 | 100% | 0.31% |
+| Road background crops | 2,000 | n/a | 0 | 100% | 0.15% |
+| Unrelated objects | 2,000 | n/a | 0 | 100% | 0.15% |
+
+**Risk–coverage trade-off** on the GTSRB test:
+
+| $`q`$ | Threshold $`\tau`$ | Coverage | False answers | Selective risk |
+|---|---|---|---|---|
+| 1 (no threshold) | 0 | 100% | 86 | 0.68% |
+| 0.99 | 0.9953 | 97.3% | 28 | 0.23% |
+| 0.97 | 0.99984 | 94.2% | 18 | 0.15% |
+| 0.95 | 0.99999 | 90.3% | 4 | 0.035% |
+| 0.90 | ≈ 1 | 84.6% | 1 | 0.009% |
+
+Rejecting 10% of the images lowers the selective risk by a factor of about 20. The thresholds are extreme because softmax classifiers are overconfident: at $`q = 0.95`$ an answer is accepted only if about 0.001% of the probability is left to all other outputs.
+
+**Negative results.** Test-time augmentation with nine views does not remove the remaining errors: the network repeats the same mistake on every view. Requiring two independently trained networks to agree reduces false answers on unseen foreign types (2 instead of 10) but not on blurred known signs, where both networks make the same mistake.
+
+## 4. Discussion
+
+The answer to the title question is negative on all three routes. Used as is, large models are 38 points or more below a compact specialised network. Used as frozen feature extractors, they are 34 points below. Fully fine-tuned, the best of them ties with it, and at that point it is itself a specialised model: it needs the same labelled data and the same training procedure, and costs 5 times the latency and 16 times the memory.
+
+Three observations explain the result. First, the task is visually simple and closed: 43 rigid, standardised objects. A network with a receptive field covering the input and 4.7M parameters already has enough capacity, so additional capacity has nothing to fit. Second, the task depends on fine distinctions that generic pretraining does not emphasise: mirror orientation, digits inside a speed limit, a diagonal stroke. These are exactly where zero-shot models fail. Third, the inputs are small (26 px and up), far from the resolution the large encoders were trained at.
+
+For the open-set problem the practical conclusion is that false acceptances are controlled by data coverage. A network reliably rejects what it was shown as "unknown" and generalises only partly beyond it; the threshold then sets the operating point on the risk–coverage curve but cannot substitute for missing outlier data. The errors that remain are in-distribution ambiguities, such as a blurred "60" against "80", that cannot be resolved from one image. Agreement across consecutive video frames is the natural next step and was not tested.
+
+## 5. Threats to validity
+
+- **Range of large models.** The largest model tested has 4.4B parameters and runs locally. Frontier multimodal models available through an API were not evaluated. They may be more accurate zero-shot; their latency and cost per image are further from 1 ms, not closer.
+- **Prompting.** One prompt wording per class was used for the zero-shot models. Prompt engineering may raise their accuracy; it is unlikely to close a 38-point gap but this was not measured.
+- **Data regime.** The task has 26,640 labelled training images. With few examples per class the balance between pretrained and from-scratch models may differ.
+- **Single runs.** Most models and all open-set variants were trained once. Between two trainings of the same open-set network the number of false answers on GTSRB moved from 12 to 18, so the reported 4 could as well be 8.
+- **Seen outlier types.** Zero false answers on foreign signs was measured on types present in training (in other photos). On a type absent from every set the model may be as confidently wrong as it was on the "3.5 t" sign.
+- **Outlier realism.** Background crops are random. In a full system the classifier receives what a detector mistook for a sign (round objects, adverts, lamps), which is harder.
+- **One shifted domain.** Only Belgian signs were tested, and they are close to the German ones.
+- **Hardware.** Latency was measured on one GPU at batch size 1; CPU and embedded targets were not measured.
+- **Hyperparameters.** Learning rates were set per model family without a search, and pretrained models were trained for 6 epochs. Longer schedules may change the ranking inside the 99.0–99.5% band, which we already treat as unresolved.
+
+## 6. Using the trained model
 
 The final model ships with the repository (`models/big_cnn_oe_all.pt`, 18 MB). It needs only PyTorch and runs on a CPU.
 
@@ -53,7 +306,7 @@ data/testset/images/14_00251.png: Stop (class 14), confidence 1.0000
 data/belgium_unknown/test/images/be27_00330_00001.png: unknown, confidence 0.0000
 ```
 
-`--keep` sets how strict the model is. It is the share of clean held-out German signs the model accepts: `0.99`, `0.97` (default), `0.95` or `0.9`. Lower means fewer false answers and more rejections; the "zero false answers" table below uses `--keep 0.95`.
+`--keep` sets how strict the model is. It is the share of clean held-out German signs the model accepts: `0.99`, `0.97` (default), `0.95` or `0.9`. Lower means fewer false answers and more rejections; the final-model table in Section 3.4 uses `--keep 0.95`.
 
 To get sample images, build the test set (downloads 89 MB):
 
@@ -61,209 +314,9 @@ To get sample images, build the test set (downloads 89 MB):
 python scripts/make_testset.py
 ```
 
-## What we did and what we found
+## 7. Reproducing the results
 
-The task is the same everywhere: the input is a cropped photo of one sign, the output is one of the 43 classes of the German benchmark [GTSRB](https://benchmark.ini.rub.de/gtsrb_news.html). Detecting signs in a frame is out of scope. Everything ran on a laptop with an RTX 4090 Laptop GPU.
-
-### Step 1. Is training needed at all?
-
-We first checked whether ready-made models can do the job when given only the sign names and no labelled examples, and compared them with a plain ResNet-18 fine-tuned on signs.
-
-CLIP and SigLIP 2 embed the image and 43 text prompts of the form `a photo of a '<sign name>' traffic sign` into one space and pick the closest prompt by cosine similarity:
-
-```math
-\hat{y}(x) = \arg\max_{k \in \{1..43\}} \frac{E_{img}(x) \cdot E_{txt}(t_k)}{\lVert E_{img}(x) \rVert \, \lVert E_{txt}(t_k) \rVert}
-```
-
-The vision LLM gets the image, upscaled to at least 224 px on the short side, and the list of 43 names in the prompt, and writes the name of one option.
-
-| Approach | Parameters | Trained on signs | Accuracy (430 images) | Time per image | GPU memory |
-|---|---|---|---|---|---|
-| ResNet-18 classifier | 11.2M | yes, half a minute | 97.2–99.5% | 1.7 ms | 0.2 GB |
-| SigLIP 2 So400m | 1,136M | no | 60.7% | 20.7 ms | 2.2 GB |
-| Vision LLM, Qwen3-VL-4B | 4,438M | no | 52.6% | 199 ms | 8.6 GB |
-| CLIP L/14 | 428M | no | 39.1% | 11.3 ms | 0.8 GB |
-
-With 430 images the 95% interval of a 60% score is about ±4.6 points, so the order of the zero-shot models among themselves is less certain than their distance from the classifier.
-
-The best zero-shot model gets four images out of ten wrong. These models confuse left and right, fail on crossed-out signs and degrade badly on small images: on signs up to 35 pixels wide all three score 27–38%. The vision LLM is the most expensive option and not the most accurate one.
-
-### Step 2. Which classifier?
-
-Next we compared 21 trainable classifiers on the full test split of 12,630 images, from a custom network with 0.3M parameters to ViT-B with 86M.
-
-| Model | Parameters | Input | Accuracy | Errors of 12,630 | Time per image | GPU memory | Training |
-|---|---|---|---|---|---|---|---|
-| Custom large CNN, from scratch | 4.7M | 64 px | 99.51% | 62 | 1.1 ms | 83 MB | 3.4 min |
-| CLIP B/16, fine-tuned | 85.8M | 224 px | 99.50% | 63 | 5.6 ms | 1,319 MB | 9.1 min |
-| FastViT-T8 | 3.3M | 224 px | 99.31% | 87 | 6.2 ms | 61 MB | 4.4 min |
-| ViT-B/16 | 85.8M | 224 px | 99.30% | 88 | 6.3 ms | 1,319 MB | 9.1 min |
-| SigLIP 2 B/16, fine-tuned | 92.9M | 224 px | 99.29% | 90 | 6.1 ms | 1,429 MB | 9.7 min |
-| DINOv2-S, fully fine-tuned | 21.7M | 224 px | 99.25% | 95 | 5.8 ms | 337 MB | 5.0 min |
-| ResNet-18, mean of 4 runs | 11.2M | 96 px | 99.02% | 124 | 1.7 ms | 185 MB | 0.5 min |
-| Custom small CNN, from scratch | 0.3M | 48 px | 98.99% | 127 | 0.8 ms | 6 MB | 0.5 min |
-| DINOv3-S, linear head only | 21.6M | 224 px | 65.69% | 4,333 | 10.0 ms | 93 MB | 1.9 min |
-| DINOv2-S, linear head only | 21.7M | 224 px | 65.60% | 4,345 | 4.1 ms | 88 MB | 1.9 min |
-
-The full table of 22 rows is in [results/classifiers.md](results/classifiers.md).
-
-- **Accuracy tops out at 99.0–99.5%.** Eight variants land in this band.
-- **Differences inside the band are noise.** There are two sources of it. The sampling error of an accuracy measured on $`n`$ images is
-
-  ```math
-  SE = \sqrt{\frac{p(1-p)}{n}} = \sqrt{\frac{0.995 \cdot 0.005}{12630}} \approx 0.06 \text{ points,}
-  ```
-
-  a 95% interval of ±0.12 points. The run-to-run spread is larger: the same ResNet-18 training repeated with four seeds gave 98.8% to 99.3%, a standard deviation of 0.24 points. Models closer than about half a point cannot be ranked from one run.
-- **Frozen general-purpose features give 66%.** A linear layer on top of frozen DINOv2 or DINOv3 features stops at 66%; the same DINOv2 backbone fine-tuned end to end reaches 99.25%. The pretrained representation does not contain the task; the training on signs does the work.
-- **Large models pay several times over for fractions of a percent.** Fine-tuned CLIP B/16 is 3 times slower than ResNet-18 and uses 7 times more GPU memory.
-- **Pretraining turned out to be optional.** A custom small network trained from scratch reached 99.0% with 6 MB of GPU memory and 0.8 ms per image.
-
-We then scaled the custom network up to 4.7M parameters. It gives 99.42–99.51% in four runs (standard deviation 0.04 points), the same as the best large model, at 1.1 ms per image and 83 MB of GPU memory. Against fine-tuned CLIP B/16 that is 18 times fewer parameters, 5 times less time per image, 16 times less GPU memory at inference and 13 times less during training (0.7 GB against 9.8 GB).
-
-### Step 3. What happens on signs from another country?
-
-Models trained on German signs were tested on 940 Belgian images ([BelgiumTSC](https://btsd.ethz.ch/shareddata/)) shot with a different camera, without any further training.
-
-| Model | Germany | Belgium |
-|---|---|---|
-| CLIP B/16, fine-tuned | 99.5% | 98.2% |
-| Custom large CNN | 99.5% | 96.9% |
-| Custom small CNN | 99.0% | 94.9% |
-| ResNet-18 | 99.0% | 94.8% |
-| SigLIP 2 So400m, zero-shot | n/a | 75.4% |
-
-Every model loses accuracy: the best ones 1–4 points, lightweight mobile networks up to 11. Most of the loss comes from signs that are drawn differently in Belgium, not from the camera: "Children crossing" is recognised 72% of the time and "Bicycles crossing" 7%, while signs with identical artwork transfer at 98–100%. The custom CNN and ResNet-18 rows are means of four runs; the large CNN ranged from 95.3% to 97.8% (standard deviation 1.1 points), and the sampling error on 940 images adds a 95% interval of about ±1.1 points. CLIP was trained once, so this table cannot separate it from the custom large CNN. If large-scale pretraining helps anywhere in this study, it is here, on a shifted distribution; the data are not enough to say that it does.
-
-### Step 4. A model that can say "unknown"
-
-A plain classifier must pick one of 43 classes even when the sign is blurred, unfamiliar, or not a sign at all. We trained a single network to answer either with a sign or with "unknown" by adding a 44th output and a confidence threshold.
-
-The network outputs 44 logits $`z`$: 43 signs plus "unknown". Its confidence is the largest probability among the 43 sign classes, with the softmax taken over all 44 outputs, so probability mass given to "unknown" lowers it:
-
-```math
-p_k(x) = \frac{e^{z_k(x)}}{\sum_{j=1}^{44} e^{z_j(x)}}, \qquad s(x) = \max_{k \le 43} p_k(x), \qquad
-\text{answer}(x) = \begin{cases} \arg\max_{k \le 43} p_k(x) & \text{if } s(x) \ge \tau \\ \text{unknown} & \text{otherwise} \end{cases}
-```
-
-The threshold $`\tau`$ is never tuned on test data. It is the empirical $`(1-q)`$ quantile of $`s`$ on 2,070 held-out German images, so that the model accepts a share $`q`$ of them; `--keep` is $`q`$. The held-out images are whole tracks (every tenth physical sign), because frames of one track are near-duplicates and a random split would make the threshold too lenient.
-
-Every image then falls into one of three outcomes, and their shares sum to one: answered correctly, answered falsely, rejected. For a set without known signs every answer is false.
-
-What mattered most was what the network was shown as "unknown":
-
-- **A confidence threshold alone** lets foreign signs through. ResNet-18 confidently names one in five of them as a known sign.
-- **Only foreign Belgian signs** in training make the network reject every Belgian photo, known signs included. Belgian photos of known signs had to go into training too.
-- **Road-scene crops without signs** in training remove false answers on background and also on random objects the network never saw.
-- **All foreign sign types** in training remove the last confident errors. Before that the network took a "3.5 t weight limit" sign for "Speed limit 30", because it had never seen one.
-
-The final model at the strict threshold (`--keep 0.95`):
-
-| Test set | Correct | False answers | Rejected |
-|---|---|---|---|
-| German test, 12,630 images | 90.3% | 4 images (0.03%) | 9.7% |
-| Belgian signs of known classes, 940 | 96.1% | 0 | 3.9% |
-| Foreign signs, 983 | n/a | 0 | 100% |
-| Road background crops, 2,000 | n/a | 0 | 100% |
-| Random objects, 2,000 | n/a | 0 | 100% |
-
-Zero observed errors is not a zero error rate. By the rule of three, 0 errors in $`n`$ independent trials bounds the true rate by $`3/n`$ at 95% confidence: below 0.31% for foreign signs and 0.15% for background and objects.
-
-The threshold trades coverage (the share of images answered) for selective risk (the share of false answers among those answered). On the German test:
-
-| `--keep` | Threshold $`\tau`$ | Coverage | False answers | Selective risk |
-|---|---|---|---|---|
-| no threshold | 0 | 100% | 86 | 0.68% |
-| 0.99 | 0.9953 | 97.3% | 28 | 0.23% |
-| 0.97 (default) | 0.99984 | 94.2% | 18 | 0.15% |
-| 0.95 | 0.99999 | 90.3% | 4 | 0.035% |
-| 0.90 | ≈ 1 | 84.6% | 1 | 0.009% |
-
-Giving up 10% of the images cuts the error rate among the answers about 20 times. The thresholds are extreme because a softmax classifier is overconfident: at `--keep 0.95` an answer is accepted only if the network leaves about 0.001% of probability to everything else.
-
-Two attempts to remove the remaining errors failed. Looking at each image nine times with small distortions does nothing, because the network makes the same mistake on every view. Requiring two different networks to agree helps on unfamiliar input (2 false answers instead of 10 on foreign signs of unseen types) but not on blurred known signs, where both make the same mistake.
-
-### Takeaways
-
-- **Large general-purpose models did not replace the specialised one.** As is they are 38 points or more behind; with frozen features, 34 points; fully fine-tuned they tie at 5 times the latency and 16 times the memory.
-- **With labelled data, use a small trained classifier.** Zero-shot models are fine for a prototype, not for production.
-- **Model size buys almost nothing here.** A 4.7M-parameter network matches models almost 20 times larger. What matters is training on the task, not the size or the pretraining.
-- **False answers are fixed with data, not with a threshold.** The network reliably rejects only what it was shown as "unknown" during training.
-- **Some errors cannot be removed from a single image.** A blurred "60" does look like "80". The next lever is agreement across neighbouring video frames, which we did not test.
-
-### What these results do not show
-
-- **The largest model tested has 4.4B parameters and runs locally.** Frontier multimodal models behind an API were not tested. They may score higher zero-shot; their latency and cost per image are further from 1 ms, not closer.
-- **The task has plenty of labelled data:** 26,640 training images for 43 classes. With a handful of examples per class the balance between pretrained and from-scratch models may be different.
-- **Zero false answers on foreign signs was measured on sign types the network had seen** (in other photos). On a type that is in none of the sets it may be as confidently wrong as it was on "3.5 t".
-- **The reject models were trained once each.** The number of false answers on the German test moved from 12 to 18 between two trainings of the same network, so 4 could as well be 8.
-- **Background crops are random.** In a real system the classifier receives whatever a detector took for a sign: round objects, adverts, street lamps. Expect more false answers on those.
-- **Only one foreign country was tested,** and its signs are close to the German ones.
-- **Speed was measured on a GPU only.**
-
-## Technical details
-
-### The network
-
-The custom CNN is a plain VGG-style stack, about ten lines of PyTorch (`small_cnn` in [bench/finetune.py](bench/finetune.py)). One block is
-
-```text
-Conv 3x3 -> BatchNorm -> ReLU -> Conv 3x3 -> BatchNorm -> ReLU -> MaxPool 2x2
-```
-
-and the network is several blocks, global average pooling, dropout 0.3 and one linear layer.
-
-| | Small CNN | Large CNN |
-|---|---|---|
-| Input | 48×48 RGB | 64×64 RGB |
-| Blocks and channels | 3: 32, 64, 128 | 4: 64, 128, 256, 512 |
-| Feature map before global pooling | 6×6×128 | 4×4×512 |
-| Parameters | 293,451 | 4,711,275 |
-| Weights, float32 | 1.1 MB | 18 MB |
-| Epochs | 15 | 30 |
-
-In the large network 4,685,376 of the parameters are convolution weights, 3,840 belong to batch norm and 22,059 to the linear layer; the "unknown" output adds 513 more. The receptive field of its last convolution is 68 px, so every output feature sees the whole 64 px image. There are no residual connections, attention layers or pretrained weights.
-
-### Training
-
-All classifiers share one recipe; only the learning rate, input size and number of epochs differ.
-
-- **Loss:** cross-entropy over 43 classes (44 with "unknown"), no label smoothing, no class weights:
-
-  ```math
-  L = -\frac{1}{B} \sum_{i=1}^{B} \log p_{y_i}(x_i), \qquad B = 128
-  ```
-
-- **Optimiser:** AdamW, weight decay $`10^{-4}`$, one-cycle learning-rate schedule. Peak rate $`2 \cdot 10^{-3}`$ for the custom CNNs and from $`3 \cdot 10^{-5}`$ to $`10^{-3}`$ for pretrained models, chosen by model family (see `MODELS` in [bench/finetune.py](bench/finetune.py)).
-- **Epochs:** 6 for pretrained models, 15 and 30 for the custom CNNs trained from scratch.
-- **Precision:** bfloat16 autocast during training, float32 at inference.
-- **Augmentation:** rotation up to ±10°, shift up to 10%, scale 0.9–1.1, brightness and contrast ±40%, saturation ±30%. No mirror flips: they turn "keep right" into "keep left".
-- **Input:** the crop is resized to a square without preserving the aspect ratio. Custom CNNs normalise with mean and standard deviation 0.5; pretrained models use their own statistics.
-- **Data:** GTSRB train, 26,640 images, 43 classes.
-
-The final model is trained on 43,734 images, of which 28% are "unknown":
-
-| Source | Label | Images | Repeats | In training |
-|---|---|---|---|---|
-| GTSRB train without held-out tracks | 43 signs | 24,570 | 1 | 24,570 |
-| BelgiumTSC, signs of known classes | 43 signs | 1,773 | 4 | 7,092 |
-| BelgiumTSC, foreign sign types, group A | unknown | 868 | 4 | 3,472 |
-| BelgiumTSC, foreign sign types, group B | unknown | 1,150 | 4 | 4,600 |
-| GTSDB road crops without signs | unknown | 4,000 | 1 | 4,000 |
-
-Scarce sources are repeated four times per epoch, with different augmentations each time. Random objects (CIFAR-100) are never used in training, only in evaluation.
-
-### Measurement
-
-- **Time per image** is wall-clock time for one image at a time (batch size 1) on the GPU, including reading the file, resizing and normalising, after a warm-up. It is the latency a single request would see, not the throughput of batched inference.
-- **GPU memory** is the peak allocated by PyTorch during inference: weights plus activations.
-- **Zero-shot models** run in float16, the vision LLM in bfloat16, the classifiers in float32.
-- **Accuracy** of the classifiers is measured on the full GTSRB test split (12,630 images). The zero-shot models are measured on a balanced subset of 430 images, 10 per class.
-- **Hardware:** one RTX 4090 Laptop GPU with 16 GB of memory.
-
-## Reproduce the results
-
-Parts 1–4 need Linux with an NVIDIA GPU: 16 GB of GPU memory covers everything, and 4 GB is enough for the custom CNNs and ResNet-18. The scripts use CUDA directly and do not run on CPU or Apple Silicon. Tested with Python 3.14, PyTorch 2.15 (CUDA 13.2), torchvision 0.29 and transformers 5.24.
+The code is organised in four parts that correspond to RQ1–RQ4. Parts 1–4 need Linux with an NVIDIA GPU: 16 GB of GPU memory covers everything, and 4 GB is enough for the custom CNNs and ResNet-18. The scripts use CUDA directly and do not run on CPU or Apple Silicon. Tested with Python 3.14, PyTorch 2.15 (CUDA 13.2), torchvision 0.29 and transformers 5.24.
 
 The raw results of our runs are already in `results/`. Each run script overwrites them and regenerates its table; set `SKIP_DONE=1` to keep results that exist. A fresh copy of this repository reproduced the shipped numbers exactly on the same machine. On other GPUs or library versions expect small differences: training is seeded but not bit-exact across setups, and accuracy moves by about 0.5 points between runs on the German test and up to 2.5 on the Belgian one.
 
@@ -324,7 +377,7 @@ The first command trains the custom CNNs and ResNet-18 in about 5 minutes. The s
 
 The tables are rebuilt from the JSON files by `bench/report*.py`, which need only the Python standard library. The JSON files hold the answer for every image, so any number can be recomputed without a GPU.
 
-## Repository layout
+### Repository layout
 
 ```text
 predict.py                 recognise a sign in an image, or answer "unknown"
@@ -343,16 +396,25 @@ results/                   raw results and tables of our runs
 REPORT.md                  full write-up
 ```
 
-## Datasets
+## 8. References
 
-The datasets are not redistributed here; the scripts download them from their official sources. Check their terms before using them for anything beyond research.
+The datasets are not redistributed here; the scripts download them from their official sources. Check their terms before using them for anything beyond research. `models/big_cnn_oe_all.pt` was trained on GTSRB, BelgiumTSC and GTSDB crops.
 
-- **GTSRB**, German Traffic Sign Recognition Benchmark: Stallkamp et al., 2012. Training and test images of 43 classes.
-- **GTSDB**, German Traffic Sign Detection Benchmark: Houben et al., 2013. Full road frames, used here as a source of background crops.
-- **BelgiumTSC**: Timofte, Zimmermann and Van Gool, 2014. Belgian signs, used as the other-country test and as "unknown" signs.
-- **CIFAR-100**: Krizhevsky, 2009. Used as random non-sign objects.
-
-`models/big_cnn_oe_all.pt` was trained on GTSRB, BelgiumTSC and GTSDB crops.
+1. J. Stallkamp, M. Schlipsing, J. Salmen, C. Igel. Man vs. computer: Benchmarking machine learning algorithms for traffic sign recognition. *Neural Networks*, 32, 2012. (GTSRB)
+2. S. Houben, J. Stallkamp, J. Salmen, M. Schlipsing, C. Igel. Detection of traffic signs in real-world images: The German Traffic Sign Detection Benchmark. *IJCNN*, 2013. (GTSDB)
+3. R. Timofte, K. Zimmermann, L. Van Gool. Multi-view traffic sign detection, recognition, and 3D localisation. *Machine Vision and Applications*, 25, 2014. (BelgiumTSC)
+4. A. Krizhevsky. Learning multiple layers of features from tiny images. Technical report, University of Toronto, 2009. (CIFAR-100)
+5. A. Radford et al. Learning transferable visual models from natural language supervision. *ICML*, 2021. (CLIP)
+6. M. Tschannen et al. SigLIP 2: Multilingual vision-language encoders with improved semantic understanding, localization, and dense features. arXiv:2502.14786, 2025.
+7. M. Oquab et al. DINOv2: Learning robust visual features without supervision. *TMLR*, 2024.
+8. O. Siméoni et al. DINOv3. arXiv:2508.10104, 2025.
+9. Qwen Team. Qwen3-VL-4B-Instruct, model card. Hugging Face, `Qwen/Qwen3-VL-4B-Instruct`.
+10. D. Hendrycks, M. Mazeika, T. Dietterich. Deep anomaly detection with outlier exposure. *ICLR*, 2019.
+11. D. Hendrycks, K. Gimpel. A baseline for detecting misclassified and out-of-distribution examples in neural networks. *ICLR*, 2017.
+12. Y. Geifman, R. El-Yaniv. Selective classification for deep neural networks. *NeurIPS*, 2017.
+13. I. Loshchilov, F. Hutter. Decoupled weight decay regularization. *ICLR*, 2019. (AdamW)
+14. L. N. Smith, N. Topin. Super-convergence: Very fast training of neural networks using large learning rates. 2019. (one-cycle schedule)
+15. K. Simonyan, A. Zisserman. Very deep convolutional networks for large-scale image recognition. *ICLR*, 2015.
 
 ## License
 
